@@ -119,6 +119,19 @@
     :ensure t)
 #+end_src
 
+** Dashboard
+#+begin_src emacs-lisp
+  (use-package dashboard
+    :ensure t
+    :config
+    ;; Enable the dashboard
+    (dashboard-setup-startup-hook)
+    (setq dashboard-startup-banner "~/.config/emacs/emacs.png")
+    (setq dashboard-banner-logo-title "Welcome to EMACS")
+    (setq dashboard-footer-messages '("People never quit Emacs; they just die at some point."))
+    (setq dashboard-items nil)
+  )
+#+end_src
 
 * GENERAL CHANGES
 
