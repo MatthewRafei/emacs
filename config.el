@@ -103,6 +103,12 @@
   (setq dashboard-items nil)
 )
 
+(require 'org-tempo)
+
+(cond
+ ((find-font (font-spec :name "Iosevka Extended"))
+  (set-frame-font "Iosevka Extended 11" nil t)))
+
 (setq display-buffer-alist
       '(("\\*compilation\\*"
          (display-buffer-same-window))))
@@ -113,3 +119,10 @@
 
 (global-display-line-numbers-mode 1)
 (global-visual-line-mode t)
+
+;; Adding `/path/to/simpc` to load-path so `require` can find it
+(add-to-list 'load-path "~/.config/emacs/simpc-mode")
+;; Importing simpc-mode
+(require 'simpc-mode)
+;; Automatically enabling simpc-mode on files with extensions like .h, .c, .cpp, .hpp
+(add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode))

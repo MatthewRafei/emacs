@@ -141,9 +141,7 @@
 
 ** Change Font
 #+begin_src emacs-lisp
-  (cond
-   ((find-font (font-spec :name "Iosevka Extended"))
-    (set-frame-font "Iosevka Extended 11" nil t)))
+(set-frame-font "Inconsolata 12" nil t)
 #+end_src
 
 ** Change Compile command behavior
@@ -166,12 +164,4 @@
   (global-visual-line-mode t)
 #+end_src
 
-** Simple C-Mode for Emacs
-#+begin_src emacs-lisp
-  ;; Adding `/path/to/simpc` to load-path so `require` can find it
-  (add-to-list 'load-path "~/.config/emacs/simpc-mode")
-  ;; Importing simpc-mode
-  (require 'simpc-mode)
-  ;; Automatically enabling simpc-mode on files with extensions like .h, .c, .cpp, .hpp
-  (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode))
-#+end_src
+
