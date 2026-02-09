@@ -10,7 +10,7 @@
        (build (expand-file-name "elpaca/" elpaca-builds-directory))
        (order (cdr elpaca-order))
        (default-directory repo))
-  (add-to-list 'load-path (if (file-exists-p build) build repo))
+  (add-to-list 'load-path (if (file-exists-p build) build repo)) ;
   (unless (file-exists-p repo)
     (make-directory repo t)
     (when (<= emacs-major-version 28) (require 'subr-x))
@@ -126,3 +126,17 @@
 (require 'simpc-mode)
 ;; Automatically enabling simpc-mode on files with extensions like .h, .c, .cpp, .hpp
 (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode))
+
+(global-set-key (kbd "C-c c") 'compile)
+
+(defun switch-to-compilation-buffer ()
+"Switch to the *compilation* buffer if it exists."
+(interactive)
+(let ((buf (get-buffer "*compilation*")))
+  (if buf
+      (switch-to-buffer buf)
+    (message "Compilation buffer does not exist"))))
+
+(global-set-key (kbd "C-<tab>") 'switch-to-compilation-buffer)
+
+(global-set-key (kbd "C-x m") 'delete-other-windows)
