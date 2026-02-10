@@ -176,6 +176,11 @@
   (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode))
 #+end_src
 
+** Open Man pages on current buffer
+#+begin_src emacs-lisp
+  (setq Man-notify-method 'pushy)
+#+end_src
+
 * Keybinds
 
 ** Set compile keybind
