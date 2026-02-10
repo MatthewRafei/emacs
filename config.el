@@ -127,7 +127,11 @@
 ;; Automatically enabling simpc-mode on files with extensions like .h, .c, .cpp, .hpp
 (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode))
 
+(setq Man-notify-method 'pushy)
+
 (global-set-key (kbd "C-c c") 'compile)
+
+(global-set-key (kbd "C-c s") 'window-swap-states)
 
 (defun switch-to-compilation-buffer ()
 "Switch to the *compilation* buffer if it exists."

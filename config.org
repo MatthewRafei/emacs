@@ -188,6 +188,11 @@
   (global-set-key (kbd "C-c c") 'compile)
 #+end_src
 
+** Swap window-swap-state
+#+begin_src emacs-lisp
+  (global-set-key (kbd "C-c s") 'window-swap-states)
+#+end_src
+
 ** Switch to compile buffer
 #+begin_src emacs-lisp
   (defun switch-to-compilation-buffer ()
