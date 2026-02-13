@@ -132,6 +132,13 @@
   )
 #+end_src
 
+** Multiple cursors
+#+begin_src emacs-lisp
+  (use-package multiple-cursors
+  	 :ensure t)
+
+#+end_src
+
 * GENERAL CHANGES
 
 ** Org-tempo 

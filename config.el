@@ -103,6 +103,9 @@
   (setq dashboard-items nil)
 )
 
+(use-package multiple-cursors
+	 :ensure t)
+
 (require 'org-tempo)
 
 (cond
