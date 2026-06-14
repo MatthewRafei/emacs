@@ -1,6 +1,15 @@
 (setq package-enable-at-startup nil)
 (setq inhibit-startup-screen t)
 
+;; Stop the White flash when first starting emacs
+(setq default-frame-alist '(
+
+			    (background-color . "#000000")
+
+			    (ns-appearance . dark)
+
+			    (ns-transparent-titlebar . t)))
+
 ;; Kill UI here so there's zero flicker before init.el runs
 (tool-bar-mode -1)
 (menu-bar-mode -1)

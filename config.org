@@ -6,106 +6,118 @@
 
 * IMPORTANT PROGRAMS TO LOAD FIRST
 
+** Cursor
+#+begin_src emacs-lisp
+(setq cursor-in-non-selected-windows nil)
+#+end_src
+
 ** Elpaca Package Manager
 #+begin_src emacs-lisp
-(defvar elpaca-installer-version 0.12)
-(defvar elpaca-directory (expand-file-name "elpaca/" user-emacs-directory))
-(defvar elpaca-builds-directory (expand-file-name "builds/" elpaca-directory))
-(defvar elpaca-sources-directory (expand-file-name "sources/" elpaca-directory))
-(defvar elpaca-order '(elpaca :repo "https://github.com/progfolio/elpaca.git"
-                              :ref nil :depth 1 :inherit ignore
-                              :files (:defaults "elpaca-test.el")
-                              :build (:not elpaca-activate)))
-(let* ((repo  (expand-file-name "elpaca/" elpaca-sources-directory))
-       (build (expand-file-name "elpaca/" elpaca-builds-directory))
-       (order (cdr elpaca-order))
-       (default-directory repo))
-  (add-to-list 'load-path (if (file-exists-p build) build repo))
-  (unless (file-exists-p repo)
-    (make-directory repo t)
-    (when (<= emacs-major-version 28) (require 'subr-x))
-    (condition-case-unless-debug err
-        (if-let* ((buffer (pop-to-buffer-same-window "*elpaca-bootstrap*"))
-                  ((zerop (apply #'call-process `("git" nil ,buffer t "clone"
-                                                  ,@(when-let* ((depth (plist-get order :depth)))
-                                                      (list (format "--depth=%d" depth) "--no-single-branch"))
-                                                  ,(plist-get order :repo) ,repo))))
-                  ((zerop (call-process "git" nil buffer t "checkout"
-                                        (or (plist-get order :ref) "--"))))
-                  (emacs (concat invocation-directory invocation-name))
-                  ((zerop (call-process emacs nil buffer nil "-Q" "-L" "." "--batch"
-                                        "--eval" "(byte-recompile-directory \".\" 0 'force)")))
-                  ((require 'elpaca))
-                  ((elpaca-generate-autoloads "elpaca" repo)))
-            (progn (message "%s" (buffer-string)) (kill-buffer buffer))
-          (error "%s" (with-current-buffer buffer (buffer-string))))
-      ((error) (warn "%s" err) (delete-directory repo 'recursive))))
-  (unless (require 'elpaca-autoloads nil t)
-    (require 'elpaca)
-    (elpaca-generate-autoloads "elpaca" repo)
-    (let ((load-source-file-function nil)) (load "./elpaca-autoloads"))))
-(add-hook 'after-init-hook #'elpaca-process-queues)
-(elpaca `(,@elpaca-order))
+  (defvar elpaca-installer-version 0.12)
+  (defvar elpaca-directory (expand-file-name "elpaca/" user-emacs-directory))
+  (defvar elpaca-builds-directory (expand-file-name "builds/" elpaca-directory))
+  (defvar elpaca-sources-directory (expand-file-name "sources/" elpaca-directory))
+  (defvar elpaca-order '(elpaca :repo "https://github.com/progfolio/elpaca.git"
+                                :ref nil :depth 1 :inherit ignore
+                                :files (:defaults "elpaca-test.el")
+                                :build (:not elpaca-activate)))
+  (let* ((repo  (expand-file-name "elpaca/" elpaca-sources-directory))
+         (build (expand-file-name "elpaca/" elpaca-builds-directory))
+         (order (cdr elpaca-order))
+         (default-directory repo))
+    (add-to-list 'load-path (if (file-exists-p build) build repo))
+    (unless (file-exists-p repo)
+      (make-directory repo t)
+      (when (<= emacs-major-version 28) (require 'subr-x))
+      (condition-case-unless-debug err
+          (if-let* ((buffer (pop-to-buffer-same-window "*elpaca-bootstrap*"))
+                    ((zerop (apply #'call-process `("git" nil ,buffer t "clone"
+                                                    ,@(when-let* ((depth (plist-get order :depth)))
+                                                        (list (format "--depth=%d" depth) "--no-single-branch"))
+                                                    ,(plist-get order :repo) ,repo))))
+                    ((zerop (call-process "git" nil buffer t "checkout"
+                                          (or (plist-get order :ref) "--"))))
+                    (emacs (concat invocation-directory invocation-name))
+                    ((zerop (call-process emacs nil buffer nil "-Q" "-L" "." "--batch"
+                                          "--eval" "(byte-recompile-directory \".\" 0 'force)")))
+                    ((require 'elpaca))
+                    ((elpaca-generate-autoloads "elpaca" repo)))
+              (progn (message "%s" (buffer-string)) (kill-buffer buffer))
+            (error "%s" (with-current-buffer buffer (buffer-string))))
+        ((error) (warn "%s" err) (delete-directory repo 'recursive))))
+    (unless (require 'elpaca-autoloads nil t)
+      (require 'elpaca)
+      (elpaca-generate-autoloads "elpaca" repo)
+      (let ((load-source-file-function nil)) (load "./elpaca-autoloads"))))
+  (add-hook 'after-init-hook #'elpaca-process-queues)
+  (elpaca `(,@elpaca-order))
 
-(elpaca elpaca-use-package
-  (elpaca-use-package-mode))
+  (elpaca elpaca-use-package
+    (elpaca-use-package-mode))
 
-(elpaca-wait)
+  (elpaca-wait)
 #+end_src
 
 ** Which-key (built-in since Emacs 30 — no elpaca needed)
 #+begin_src emacs-lisp
-(setq which-key-side-window-location 'bottom
-      which-key-sort-order #'which-key-key-order-alpha
-      which-key-sort-uppercase-first nil
-      which-key-add-column-padding 1
-      which-key-max-display-columns nil
-      which-key-min-display-lines 6
-      which-key-side-window-slot -10
-      which-key-side-window-max-height 0.25
-      which-key-idle-delay 0.8
-      which-key-max-description-length 25
-      which-key-allow-imprecise-window-fit t
-      which-key-separator " → ")
-(which-key-mode 1)
+  (setq which-key-side-window-location 'bottom
+        which-key-sort-order #'which-key-key-order-alpha
+        which-key-sort-uppercase-first nil
+        which-key-add-column-padding 1
+        which-key-max-display-columns nil
+        which-key-min-display-lines 6
+        which-key-side-window-slot -10
+        which-key-side-window-max-height 0.25
+        which-key-idle-delay 0.8
+        which-key-max-description-length 25
+        which-key-allow-imprecise-window-fit t
+        which-key-separator " → ")
+  (which-key-mode 1)
 #+end_src
 
 ** Load Theme
 #+begin_src emacs-lisp
-(use-package dracula-theme
-  :ensure t
-  :config (load-theme 'dracula t))
+  (use-package dracula-theme
+    :ensure t
+    :config
+    (load-theme 'dracula t)
+    (add-hook 'after-make-frame-functions
+              (lambda (frame)
+                (with-selected-frame frame
+                  (load-theme 'dracula t)))))
 #+end_src
 
 ** Projectile
 #+begin_src emacs-lisp
-(use-package projectile
-  :ensure t
-  :config
-  (projectile-mode +1)
-  (setq projectile-completion-system 'ido)
-  (define-key projectile-mode-map (kbd "C-c p") 'projectile-command-map))
+  (use-package projectile
+    :ensure t
+    :config
+    (projectile-mode +1)
+    (setq projectile-completion-system 'ido)
+    (define-key projectile-mode-map (kbd "C-c p") 'projectile-command-map))
 #+end_src
 
 ** Ido
 #+begin_src emacs-lisp
-(ido-mode 1)
-(ido-everywhere 1)
+  (ido-mode 1)
+  (ido-everywhere 1)
 #+end_src
 
 ** VTerm
 #+begin_src emacs-lisp
-(use-package vterm
-  :ensure t)
+  (use-package vterm
+    :ensure t)
 #+end_src
 
 ** Startup Banner
 #+begin_src emacs-lisp
   (defvar +banner--width 80)
 
+  (defvar +banner--scale 2.0)
+
   (defun +banner--center (len s)
-    (let ((padding (max 0 (/ (- len (length s)) 2))))
-      (concat (make-string padding ?\s) s)))
+    (let ((padding (max 0 (/ (- len (* (length s) +banner--scale)) 2))))
+      (concat (make-string (floor padding) ?\s) s)))
 
   (defcustom +banner--top-pos 3
     "2 - Perfect center; 3 - A bit higher."
@@ -197,7 +209,7 @@
                (mapcar (lambda (letter)
                          (propertize
                           (nth line-index (cdr (assoc letter +separate-banner)))
-                          'face (get-letter-color letter)))
+                          'face (append (get-letter-color letter) `(:height ,+banner--scale))))
                        '(letter-e letter-m letter-a letter-c letter-s))
                ""))
             (number-sequence 0 12)))
@@ -211,7 +223,7 @@
     (let* ((banner (make-banner))
            (longest-line (apply #'max (mapcar #'length banner)))
            (current-width (window-width))
-           (padding-top (max 0 (floor (/ (- (window-height) (length banner)) +banner--top-pos))))
+           (padding-top (max 0 (floor (/ (- (window-height) (* (length banner) +banner--scale)) +banner--top-pos))))
            (padding-string (make-string longest-line ?\s))
            (inhibit-read-only t))
       (erase-buffer)
@@ -224,19 +236,27 @@
                                (propertize (format "%d packages  ·  %s"
                                                    (get-elpaca-package-count)
                                                    (emacs-init-time "started in %.3f seconds"))
-                                           'face '(:foreground "#6272a4" :height 0.8))) "\n")      
-      (read-only-mode 1)))
+                                           'face '(:foreground "#6272a4" :height 2.0))) "\n")
+      (read-only-mode 1)
+      (goto-char (point-min))))
 
   (defun +banner--resize-handler (_)
     (when-let ((buffer (get-buffer "*home*"))
-               ((window-live-p (get-buffer-window buffer))))
-      (with-current-buffer buffer (draw-ascii-banner-fn))))
+               (win (get-buffer-window buffer))
+               ((window-live-p win))
+               ((<= (window-height (minibuffer-window)) 1)))
+      (with-selected-window win
+        (with-current-buffer buffer
+          (draw-ascii-banner-fn)
+          (set-window-point win (point-min))))))
 
   (defun setup-ascii-banner ()
     (let ((buf (get-buffer-create "*home*")))
-      (with-current-buffer buf (draw-ascii-banner-fn))
-      (add-hook 'window-size-change-functions #'+banner--resize-handler)
-      buf))
+      (with-current-buffer buf
+        (draw-ascii-banner-fn)
+        (setq-local cursor-type nil)
+        (add-hook 'window-size-change-functions #'+banner--resize-handler)
+        buf)))
 
   (setq initial-buffer-choice #'setup-ascii-banner)
 #+end_src
@@ -244,8 +264,8 @@
 
 ** Multiple Cursors
 #+begin_src emacs-lisp
-(use-package multiple-cursors
-  :ensure t)
+  (use-package multiple-cursors
+    :ensure t)
 #+end_src
 
 # ** Corfu (in-buffer completion)
@@ -264,90 +284,90 @@
 
 ** Org-tempo
 #+begin_src emacs-lisp
-(require 'org-tempo)
+  (require 'org-tempo)
 #+end_src
 
 ** Change Font
 #+begin_src emacs-lisp
-(cond
- ((find-font (font-spec :name "Iosevka Extended"))
-  (set-frame-font "Iosevka Extended 11" nil t))
- ((find-font (font-spec :name "DejaVu Sans Mono"))
-  (set-frame-font "DejaVu Sans Mono 11" nil t)))
+  (cond
+   ((find-font (font-spec :name "Iosevka Extended"))
+    (set-frame-font "Iosevka Extended 11" nil t))
+   ((find-font (font-spec :name "DejaVu Sans Mono"))
+    (set-frame-font "DejaVu Sans Mono 11" nil t)))
 #+end_src
 
 ** Buffer display — always same window, never auto-split
 #+begin_src emacs-lisp
-(setq display-buffer-alist
-      '(("\\*compilation\\*" (display-buffer-same-window))
-        ("\\*vterm\\*"       (display-buffer-same-window))))
+  (setq display-buffer-alist
+        '(("\\*compilation\\*" (display-buffer-same-window))
+          ("\\*vterm\\*"       (display-buffer-same-window))))
 #+end_src
 
 ** Line numbers (prog modes only — avoids garbage in org/text)
 #+begin_src emacs-lisp
-(add-hook 'prog-mode-hook #'display-line-numbers-mode)
+  (add-hook 'prog-mode-hook #'display-line-numbers-mode)
 #+end_src
 
 ** Visual line mode (prose modes only — not code)
 #+begin_src emacs-lisp
-(add-hook 'text-mode-hook #'visual-line-mode)
-(add-hook 'org-mode-hook  #'visual-line-mode)
+  (add-hook 'text-mode-hook #'visual-line-mode)
+  (add-hook 'org-mode-hook  #'visual-line-mode)
 #+end_src
 
 ** Simple C-Mode for Emacs
 #+begin_src emacs-lisp
-(when (file-directory-p "~/.config/emacs/simpc-mode")
-  (add-to-list 'load-path "~/.config/emacs/simpc-mode")
-  (require 'simpc-mode)
-  (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode)))
+  (when (file-directory-p "~/.config/emacs/simpc-mode")
+    (add-to-list 'load-path "~/.config/emacs/simpc-mode")
+    (require 'simpc-mode)
+    (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode)))
 #+end_src
 
 ** Eglot (LSP — built-in since Emacs 29)
 #+begin_src emacs-lisp
-(with-eval-after-load 'eglot
-  (add-to-list 'eglot-server-programs '(simpc-mode . ("clangd"))))
-(add-hook 'simpc-mode-hook #'eglot-ensure)
+  (with-eval-after-load 'eglot
+    (add-to-list 'eglot-server-programs '(simpc-mode . ("clangd"))))
+  (add-hook 'simpc-mode-hook #'eglot-ensure)
 #+end_src
 
 ** Open Man pages on current buffer
 #+begin_src emacs-lisp
-(setq Man-notify-method 'pushy)
+  (setq Man-notify-method 'pushy)
 #+end_src
 
 * Keybinds
 
 ** Compile
 #+begin_src emacs-lisp
-(global-set-key (kbd "C-c c") 'compile)
+  (global-set-key (kbd "C-c c") 'compile)
 #+end_src
 
 ** Swap windows
 #+begin_src emacs-lisp
-(global-set-key (kbd "C-c s") 'window-swap-states)
+  (global-set-key (kbd "C-c s") 'window-swap-states)
 #+end_src
 
 ** Switch to compilation buffer
 #+begin_src emacs-lisp
-(defun switch-to-compilation-buffer ()
-  "Switch to the *compilation* buffer if it exists."
-  (interactive)
-  (let ((buf (get-buffer "*compilation*")))
-    (if buf
-        (switch-to-buffer buf)
-      (message "Compilation buffer does not exist"))))
+  (defun switch-to-compilation-buffer ()
+    "Switch to the *compilation* buffer if it exists."
+    (interactive)
+    (let ((buf (get-buffer "*compilation*")))
+      (if buf
+          (switch-to-buffer buf)
+        (message "Compilation buffer does not exist"))))
 
-(global-set-key (kbd "C-c b") 'switch-to-compilation-buffer)
+  (global-set-key (kbd "C-c b") 'switch-to-compilation-buffer)
 #+end_src
 
 ** Kill all other windows
 #+begin_src emacs-lisp
-(global-set-key (kbd "C-x m") 'delete-other-windows)
+  (global-set-key (kbd "C-x m") 'delete-other-windows)
 #+end_src
 
 ** Multiple cursors
 #+begin_src emacs-lisp
-(global-set-key (kbd "C-c m n") 'mc/mark-next-like-this)
-(global-set-key (kbd "C-c m p") 'mc/mark-previous-like-this)
-(global-set-key (kbd "C-c m a") 'mc/mark-all-like-this)
-(global-set-key (kbd "C-c m e") 'mc/edit-lines)
+  (global-set-key (kbd "C-c m n") 'mc/mark-next-like-this)
+  (global-set-key (kbd "C-c m p") 'mc/mark-previous-like-this)
+  (global-set-key (kbd "C-c m a") 'mc/mark-all-like-this)
+  (global-set-key (kbd "C-c m e") 'mc/edit-lines)
 #+end_src

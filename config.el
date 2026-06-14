@@ -1,3 +1,5 @@
+(setq cursor-in-non-selected-windows nil)
+
 (defvar elpaca-installer-version 0.12)
 (defvar elpaca-directory (expand-file-name "elpaca/" user-emacs-directory))
 (defvar elpaca-builds-directory (expand-file-name "builds/" elpaca-directory))
@@ -58,7 +60,12 @@
 
 (use-package dracula-theme
   :ensure t
-  :config (load-theme 'dracula t))
+  :config
+  (load-theme 'dracula t)
+  (add-hook 'after-make-frame-functions
+            (lambda (frame)
+              (with-selected-frame frame
+                (load-theme 'dracula t)))))
 
 (use-package projectile
   :ensure t
@@ -75,9 +82,11 @@
 
 (defvar +banner--width 80)
 
+(defvar +banner--scale 2.0)
+
 (defun +banner--center (len s)
-  (let ((padding (max 0 (/ (- len (length s)) 2))))
-    (concat (make-string padding ?\s) s)))
+  (let ((padding (max 0 (/ (- len (* (length s) +banner--scale)) 2))))
+    (concat (make-string (floor padding) ?\s) s)))
 
 (defcustom +banner--top-pos 3
   "2 - Perfect center; 3 - A bit higher."
@@ -169,7 +178,7 @@
              (mapcar (lambda (letter)
                        (propertize
                         (nth line-index (cdr (assoc letter +separate-banner)))
-                        'face (get-letter-color letter)))
+                        'face (append (get-letter-color letter) `(:height ,+banner--scale))))
                      '(letter-e letter-m letter-a letter-c letter-s))
              ""))
           (number-sequence 0 12)))
@@ -183,7 +192,7 @@
   (let* ((banner (make-banner))
          (longest-line (apply #'max (mapcar #'length banner)))
          (current-width (window-width))
-         (padding-top (max 0 (floor (/ (- (window-height) (length banner)) +banner--top-pos))))
+         (padding-top (max 0 (floor (/ (- (window-height) (* (length banner) +banner--scale)) +banner--top-pos))))
          (padding-string (make-string longest-line ?\s))
          (inhibit-read-only t))
     (erase-buffer)
@@ -196,19 +205,27 @@
                              (propertize (format "%d packages  ·  %s"
                                                  (get-elpaca-package-count)
                                                  (emacs-init-time "started in %.3f seconds"))
-                                         'face '(:foreground "#6272a4" :height 0.8))) "\n")      
-    (read-only-mode 1)))
+                                         'face '(:foreground "#6272a4" :height 2.0))) "\n")
+    (read-only-mode 1)
+    (goto-char (point-min))))
 
 (defun +banner--resize-handler (_)
   (when-let ((buffer (get-buffer "*home*"))
-             ((window-live-p (get-buffer-window buffer))))
-    (with-current-buffer buffer (draw-ascii-banner-fn))))
+             (win (get-buffer-window buffer))
+             ((window-live-p win))
+             ((<= (window-height (minibuffer-window)) 1)))
+    (with-selected-window win
+      (with-current-buffer buffer
+        (draw-ascii-banner-fn)
+        (set-window-point win (point-min))))))
 
 (defun setup-ascii-banner ()
   (let ((buf (get-buffer-create "*home*")))
-    (with-current-buffer buf (draw-ascii-banner-fn))
-    (add-hook 'window-size-change-functions #'+banner--resize-handler)
-    buf))
+    (with-current-buffer buf
+      (draw-ascii-banner-fn)
+      (setq-local cursor-type nil)
+      (add-hook 'window-size-change-functions #'+banner--resize-handler)
+      buf)))
 
 (setq initial-buffer-choice #'setup-ascii-banner)
 
