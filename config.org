@@ -774,21 +774,21 @@ Orderless (type words in any order), Marginalia (annotations), Consult
   (add-hook 'org-mode-hook  #'visual-line-mode)
 #+end_src
 
-** Simple C-Mode for Emacs
+** C / C++
+Built-in c-mode / c++-mode with 4-space K&R style.
 #+begin_src emacs-lisp
-  (when (file-directory-p "~/.config/emacs/simpc-mode")
-    (add-to-list 'load-path "~/.config/emacs/simpc-mode")
-    (require 'simpc-mode)
-    (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode)))
+  (setq c-default-style '((java-mode . "java") (awk-mode . "awk") (other . "k&r"))
+        c-basic-offset 4)
 #+end_src
 
 ** Eglot (LSP — built-in since Emacs 29)
+clangd for C and C++ (eglot already knows to use it for these modes).
 #+begin_src emacs-lisp
   (with-eval-after-load 'eglot
-    (add-to-list 'eglot-server-programs '(simpc-mode . ("clangd")))
     (setq eglot-autoshutdown t
           eglot-events-buffer-config '(:size 0)))  ; faster, no log buffer
-  (add-hook 'simpc-mode-hook #'eglot-ensure)
+  (dolist (hook '(c-mode-hook c++-mode-hook c-ts-mode-hook c++-ts-mode-hook))
+    (add-hook hook #'eglot-ensure))
 #+end_src
 
 ** Compilation

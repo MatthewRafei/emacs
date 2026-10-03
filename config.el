@@ -670,16 +670,14 @@ bigger windows keep that size instead of blowing the logo up.")
 (add-hook 'text-mode-hook #'visual-line-mode)
 (add-hook 'org-mode-hook  #'visual-line-mode)
 
-(when (file-directory-p "~/.config/emacs/simpc-mode")
-  (add-to-list 'load-path "~/.config/emacs/simpc-mode")
-  (require 'simpc-mode)
-  (add-to-list 'auto-mode-alist '("\\.[hc]\\(pp\\)?\\'" . simpc-mode)))
+(setq c-default-style '((java-mode . "java") (awk-mode . "awk") (other . "k&r"))
+      c-basic-offset 4)
 
 (with-eval-after-load 'eglot
-  (add-to-list 'eglot-server-programs '(simpc-mode . ("clangd")))
   (setq eglot-autoshutdown t
         eglot-events-buffer-config '(:size 0)))  ; faster, no log buffer
-(add-hook 'simpc-mode-hook #'eglot-ensure)
+(dolist (hook '(c-mode-hook c++-mode-hook c-ts-mode-hook c++-ts-mode-hook))
+  (add-hook hook #'eglot-ensure))
 
 (setq compilation-scroll-output 'first-error
       compilation-always-kill t
