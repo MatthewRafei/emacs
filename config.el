@@ -1,3 +1,4 @@
+;;; config.el --- tangled from config.org, edit that instead  -*- lexical-binding: t -*-
 (setq cursor-in-non-selected-windows nil)
 
 (defvar elpaca-installer-version 0.12)
@@ -531,7 +532,7 @@ bigger windows keep that size instead of blowing the logo up.")
     (goto-char (point-min))))
 
 (defun +banner--resize-handler (_)
-  (when-let ((buffer (get-buffer "*home*"))
+  (when-let* ((buffer (get-buffer "*home*"))
              (win (get-buffer-window buffer))
              ((window-live-p win))
              ((<= (window-height (minibuffer-window)) 1)))
@@ -541,7 +542,7 @@ bigger windows keep that size instead of blowing the logo up.")
         (set-window-point win (point-min))))))
 
 (defun +banner--redraw-all ()
-  (when-let ((buffer (get-buffer "*home*"))
+  (when-let* ((buffer (get-buffer "*home*"))
              (win (get-buffer-window buffer t)))
     (+banner--resize-handler nil)))
 (add-hook '+theme-changed-hook #'+banner--redraw-all)
