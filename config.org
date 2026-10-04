@@ -12,6 +12,32 @@
 (setq cursor-in-non-selected-windows nil)
 #+end_src
 
+** What this machine has
+Everything below adapts to what is actually installed, so the same config
+boots on a bare machine, in a terminal, or under =emacs --daemon=.
+#+begin_src emacs-lisp
+  (require 'subr-x)
+
+  (defun +has (&rest programs)
+    "Path of the first of PROGRAMS found on `exec-path', or nil."
+    (seq-some #'executable-find programs))
+
+  (defvar +pkg-manager (if (+has "git") 'elpaca 'package)
+    "Elpaca clones every package with git; without git use package.el.")
+
+  (defmacro +pkg-wait ()
+    "Block until queued packages are installed (no-op under package.el)."
+    '(when (eq +pkg-manager 'elpaca) (elpaca-wait)))
+
+  (defun +gui-frame-hook (fn)
+    "Run FN on every graphical frame, now and whenever a client makes one.
+  Under --daemon there is no GUI at startup, so font/frame setup has to wait."
+    (if (daemonp)
+        (add-hook 'server-after-make-frame-hook
+                  (lambda () (when (display-graphic-p) (funcall fn (selected-frame)))))
+      (when (display-graphic-p) (funcall fn (selected-frame)))))
+#+end_src
+
 ** Elpaca Package Manager
 #+begin_src emacs-lisp
   (defvar elpaca-installer-version 0.12)
@@ -22,6 +48,7 @@
                                 :ref nil :depth 1 :inherit ignore
                                 :files (:defaults "elpaca-test.el")
                                 :build (:not elpaca-activate)))
+  (when (eq +pkg-manager 'elpaca)
   (let* ((repo  (expand-file-name "elpaca/" elpaca-sources-directory))
          (build (expand-file-name "elpaca/" elpaca-builds-directory))
          (order (cdr elpaca-order))
@@ -49,21 +76,43 @@
     (unless (require 'elpaca-autoloads nil t)
       (require 'elpaca)
       (elpaca-generate-autoloads "elpaca" repo)
-      (let ((load-source-file-function nil)) (load "./elpaca-autoloads"))))
-  (add-hook 'after-init-hook #'elpaca-process-queues)
-  (elpaca `(,@elpaca-order))
+      (let ((load-source-file-function nil)) (load "./elpaca-autoloads")))))
 
-  (elpaca elpaca-use-package
-    (elpaca-use-package-mode))
+  (when (eq +pkg-manager 'elpaca)
+    (add-hook 'after-init-hook #'elpaca-process-queues)
+    (elpaca `(,@elpaca-order))
+    (elpaca elpaca-use-package
+      (elpaca-use-package-mode))
+    ;; Most packages below depend on these. Queued separately on a fresh
+    ;; install, every dependent races to clone the same repo and sees a
+    ;; half-written checkout ("Unable to find main elisp file for compat"),
+    ;; so build them once, first.
+    (elpaca compat)
+    (elpaca cond-let)
+    (elpaca llama))
 
-  (elpaca-wait)
+  (+pkg-wait)
+#+end_src
+
+** package.el fallback (no git)
+#+begin_src emacs-lisp
+  (when (eq +pkg-manager 'package)
+    (require 'package)
+    (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
+    (setq package-install-upgrade-built-in t)  ; newer transient for magit
+    (package-initialize)
+    (unless (require 'use-package nil t)       ; built in since Emacs 29
+      (package-refresh-contents)
+      (package-install 'use-package)
+      (require 'use-package)))
 #+end_src
 
 ** Keep the config folder clean
 Backups, auto-saves, history and Custom's output all live in =~/.cache/emacs/=
 instead of littering this folder (and the folders you edit in) with =~= and =#= files.
 #+begin_src emacs-lisp
-  (defvar +cache-dir (expand-file-name "~/.cache/emacs/"))
+  (defvar +cache-dir
+    (expand-file-name "emacs/" (or (getenv "XDG_CACHE_HOME") "~/.cache")))
   (make-directory (expand-file-name "backups/" +cache-dir) t)
   (make-directory (expand-file-name "auto-save/" +cache-dir) t)
 
@@ -92,8 +141,11 @@ instead of littering this folder (and the folders you edit in) with =~= and =#= 
                 tab-width 4
                 fill-column 80)
 
-  (setq use-short-answers t
-        ring-bell-function #'ignore
+  (if (boundp 'use-short-answers)          ; Emacs 28+
+      (setq use-short-answers t)
+    (fset 'yes-or-no-p #'y-or-n-p))
+
+  (setq ring-bell-function #'ignore
         confirm-kill-processes nil
         require-final-newline t
         sentence-end-double-space nil
@@ -114,11 +166,15 @@ instead of littering this folder (and the folders you edit in) with =~= and =#= 
   (delete-selection-mode 1)     ; typing replaces the region
   (electric-pair-mode 1)        ; auto-close brackets and quotes
   (column-number-mode 1)
-  (pixel-scroll-precision-mode 1)
+  (when (fboundp 'pixel-scroll-precision-mode)  ; Emacs 29+
+    (pixel-scroll-precision-mode 1))
 #+end_src
 
-** Which-key (built-in since Emacs 30 — no elpaca needed)
+** Which-key (built-in since Emacs 30; installed on older Emacs)
 #+begin_src emacs-lisp
+  (unless (locate-library "which-key")
+    (use-package which-key :ensure t :demand t)
+    (+pkg-wait))
   (setq which-key-side-window-location 'bottom
         which-key-sort-order #'which-key-key-order-alpha
         which-key-sort-uppercase-first nil
@@ -131,7 +187,8 @@ instead of littering this folder (and the folders you edit in) with =~= and =#= 
         which-key-max-description-length 25
         which-key-allow-imprecise-window-fit t
         which-key-separator " → ")
-  (which-key-mode 1)
+  (when (fboundp 'which-key-mode)
+    (which-key-mode 1))
 #+end_src
 
 * LOOK
@@ -143,7 +200,9 @@ recolour the built-in =modus-vivendi= theme from it (Modus covers every
 face, so a dozen colours are enough to theme the whole UI). The palette
 directory is watched, so changing wallpaper recolours Emacs live.
 
-Without a palette (e.g. on another machine) it falls back to Dracula.
+Without a palette (e.g. on another machine) it falls back to Dracula, or
+to a built-in theme if Dracula couldn't be installed. In a terminal the
+background is left to the terminal, so its own opacity shows through.
 #+begin_src emacs-lisp
   (use-package dracula-theme
     :ensure t
@@ -159,7 +218,10 @@ Without a palette (e.g. on another machine) it falls back to Dracula.
       (condition-case nil
           (with-temp-buffer
             (insert-file-contents +theme-palette-file)
-            (json-parse-buffer :object-type 'alist))
+            (if (and (fboundp 'json-available-p) (json-available-p))
+                (json-parse-buffer :object-type 'alist)
+              (require 'json)               ; Emacs built without libjansson
+              (let ((json-object-type 'alist)) (json-read))))
         (error nil))))
 
   (defun +c (key)
@@ -176,8 +238,10 @@ Without a palette (e.g. on another machine) it falls back to Dracula.
     (interactive)
     (setq +theme-palette (+theme--read-palette))
     (mapc #'disable-theme custom-enabled-themes)
-    (if (not +theme-palette)
-        (load-theme 'dracula t)
+    (if (not (and +theme-palette (memq 'modus-vivendi (custom-available-themes))))
+        (when-let* ((fallback (seq-find (lambda (th) (memq th (custom-available-themes)))
+                                        +theme-fallbacks)))
+          (load-theme fallback t))
       (setq modus-themes-bold-constructs t
             modus-themes-italic-constructs t
             modus-themes-mixed-fonts t
@@ -185,8 +249,11 @@ Without a palette (e.g. on another machine) it falls back to Dracula.
             modus-themes-headings '((1 . (1.4 bold))
                                     (2 . (1.2 bold))
                                     (t . (1.1 semibold))))
+      ;; a key missing from the palette drops out, leaving Modus's own colour
       (setq modus-vivendi-palette-overrides
-            `(;; surfaces
+            (seq-filter
+             #'cadr
+             `(;; surfaces
               (bg-main ,(+c 'bg))
               (bg-dim ,(+c 'bgCard))
               (bg-alt ,(+c 'surface))
@@ -238,12 +305,30 @@ Without a palette (e.g. on another machine) it falls back to Dracula.
               (bg-line-number-active ,(+c 'bg))
               (bg-line-number-inactive ,(+c 'bg))
               (fg-line-number-active ,(+c 'accent))
-              (fg-line-number-inactive ,(+c 'textFaint))))
+              (fg-line-number-inactive ,(+c 'textFaint)))))
       (load-theme 'modus-vivendi t))
+    ;; early-init paints frames black to avoid a white flash, but that frame
+    ;; parameter beats the theme, so every emacsclient frame stayed black.
+    ;; Hand new frames the palette background instead (or the theme's own).
+    (setq default-frame-alist (assq-delete-all 'background-color default-frame-alist))
+    (when-let* ((bg (and +theme-palette (+c 'bg))))
+      (push (cons 'background-color bg) default-frame-alist))
     (run-hooks '+theme-changed-hook))
+
+  (defvar +theme-fallbacks '(dracula modus-vivendi wombat)
+    "Themes to try, in order, when there is no wallpaper palette.")
 
   (defvar +theme-changed-hook nil
     "Run after the wallpaper theme is (re)applied.")
+
+  (defun +theme--tty-transparent (&optional frame)
+    "Terminal frames use the terminal's background (and its transparency)."
+    (dolist (f (if frame (list frame) (frame-list)))
+      (unless (display-graphic-p f)
+        (set-face-background 'default "unspecified-bg" f))))
+  (add-hook '+theme-changed-hook #'+theme--tty-transparent)
+  (add-hook 'after-make-frame-functions #'+theme--tty-transparent)
+  (add-hook 'window-setup-hook #'+theme--tty-transparent)
 
   (defvar +theme--timer nil)
   (defun +theme--on-change (event)
@@ -254,24 +339,38 @@ Without a palette (e.g. on another machine) it falls back to Dracula.
 
   ;; Watch the directory, not the file: the generator replaces the file
   ;; atomically, which would orphan a watch on the old inode.
-  (when (file-directory-p (file-name-directory +theme-palette-file))
-    (file-notify-add-watch (file-name-directory +theme-palette-file)
-                           '(change) #'+theme--on-change))
+  (when (and (bound-and-true-p file-notify--library)   ; no inotify etc. -> C-c t
+             (file-directory-p (file-name-directory +theme-palette-file)))
+    (ignore-errors
+      (file-notify-add-watch (file-name-directory +theme-palette-file)
+                             '(change) #'+theme--on-change)))
 
-  (elpaca-wait)  ; make sure dracula is available for the fallback
+  (+pkg-wait)  ; make sure dracula is available for the fallback
   (+theme-apply)
 #+end_src
 
 ** Font
+The first installed font from the list wins. Fonts can only be queried
+from a graphical frame, so under =--daemon= this runs when the first
+=emacsclient -c= frame appears.
 #+begin_src emacs-lisp
-  (defvar +font
-    (cond ((find-font (font-spec :name "Iosevka Extended")) "Iosevka Extended")
-          ((find-font (font-spec :name "JetBrainsMono Nerd Font")) "JetBrainsMono Nerd Font")
-          (t "DejaVu Sans Mono")))
+  (defvar +font-candidates
+    '("Iosevka Extended" "Iosevka" "JetBrainsMono Nerd Font" "JetBrains Mono"
+      "Fira Code" "Hack" "DejaVu Sans Mono")
+    "Preferred monospace fonts, best first.")
 
-  (set-face-attribute 'default nil :family +font :height 110)
-  (set-face-attribute 'fixed-pitch nil :family +font :height 1.0)
-  (add-to-list 'default-frame-alist `(font . ,(format "%s-11" +font)))
+  (defvar +font nil "Font family in use (nil until a graphical frame exists).")
+
+  (defun +font-apply (frame)
+    (unless +font
+      (setq +font (seq-find (lambda (f) (find-font (font-spec :family f) frame))
+                            +font-candidates)))
+    (when +font
+      (set-face-attribute 'default nil :family +font :height 110)
+      (set-face-attribute 'fixed-pitch nil :family +font :height 1.0)
+      (add-to-list 'default-frame-alist `(font . ,(format "%s-11" +font)))))
+
+  (+gui-frame-hook #'+font-apply)
 #+end_src
 
 ** Frame: transparency and breathing room
@@ -300,18 +399,24 @@ modified dot, accent for what matters, everything else dimmed.
   (defface +ml-warn '((t :inherit bold)) "Mode line warning.")
 
   (defun +ml--refresh-faces ()
-    (when +theme-palette
-      (set-face-attribute '+ml-accent nil :foreground (+c 'accent))
-      (set-face-attribute '+ml-dim nil :foreground (+c 'textDim))
-      (set-face-attribute '+ml-faint nil :foreground (+c 'textFaint))
-      (set-face-attribute '+ml-warn nil :foreground (+c 'danger))
+    ;; without a palette, borrow colours from whatever theme is loaded
+    (let ((pick (lambda (key face attr)
+                  (or (and +theme-palette (+c key))
+                      (let ((v (face-attribute face attr nil t)))
+                        (if (stringp v) v 'unspecified))))))
+      (set-face-attribute '+ml-accent nil :foreground (funcall pick 'accent 'font-lock-keyword-face :foreground))
+      (set-face-attribute '+ml-dim nil :foreground (funcall pick 'textDim 'shadow :foreground))
+      (set-face-attribute '+ml-faint nil :foreground (funcall pick 'textFaint 'font-lock-comment-face :foreground))
+      (set-face-attribute '+ml-warn nil :foreground (funcall pick 'danger 'error :foreground))
       (dolist (f '(mode-line mode-line-inactive))
-        (set-face-attribute f nil :box `(:line-width 6 :color ,(+c 'bgPanel))))))
+        (set-face-attribute f nil :box `(:line-width 6 :color ,(funcall pick 'bgPanel f :background))))))
   (add-hook '+theme-changed-hook #'+ml--refresh-faces)
   (+ml--refresh-faces)
 
   (defun +ml--active-p ()
-    (mode-line-window-selected-p))
+    (if (fboundp 'mode-line-window-selected-p)   ; Emacs 29+
+        (mode-line-window-selected-p)
+      (eq (selected-window) (frame-selected-window))))
 
   (defun +ml--modified ()
     (cond (buffer-read-only (propertize " ● " 'face '+ml-faint 'help-echo "read-only"))
@@ -337,13 +442,15 @@ modified dot, accent for what matters, everything else dimmed.
 
   (setq-default
    mode-line-format
-   '((:eval (+ml--modified))
+   `((:eval (+ml--modified))
      (:eval (propertize (buffer-name) 'face (if (+ml--active-p) 'bold '+ml-dim)))
      (:eval (propertize "  //  " 'face '+ml-faint))
      (:eval (propertize (upcase (string-remove-suffix "-mode" (symbol-name major-mode)))
                         'face '+ml-dim))
      (:eval (+ml--vc))
-     mode-line-format-right-align
+     ,(if (boundp 'mode-line-format-right-align)  ; Emacs 30+
+          'mode-line-format-right-align
+        "    ")
      (:eval (+ml--flymake))
      (:eval (+ml--eglot))
      (:eval (propertize "%l:%c" 'face '+ml-dim))
@@ -355,14 +462,17 @@ modified dot, accent for what matters, everything else dimmed.
 The colours of each letter come from the wallpaper palette, and a fortune
 sits under it (=~/.local/bin/fortune=, same quotes as the bar).
 Keys on the home screen: =r= recent files, =p= projects, =f= find file,
-=c= this config, =g= magit, =q= quit window.
+=c= this config, =g= magit, =q= quit window. Each key runs the first of its
+commands that exists, so it still works if e.g. magit didn't install.
 #+begin_src emacs-lisp
   (defvar +banner--width 80)
 
   (defvar +banner--scale 2.0)
 
   (defun +banner--center (len s &optional scale)
-    (let ((padding (max 0 (/ (- len (* (length s) (or scale +banner--scale))) 2))))
+    ;; terminals ignore :height, so there everything is 1:1
+    (let* ((scale (if (display-graphic-p) (or scale +banner--scale) 1.0))
+           (padding (max 0 (/ (- len (* (length s) scale)) 2))))
       (concat (make-string (floor padding) ?\s) s)))
 
   (defcustom +banner--top-pos 3
@@ -470,9 +580,11 @@ Keys on the home screen: =r= recent files, =p= projects, =f= find file,
             (number-sequence 0 12)))
 
   (defun get-elpaca-package-count ()
-    (length (directory-files
-             (expand-file-name "builds/" elpaca-directory)
-             nil "^[^.]")))
+    (if (eq +pkg-manager 'elpaca)
+        (length (directory-files
+                 (expand-file-name "builds/" elpaca-directory)
+                 nil "^[^.]"))
+      (length package-activated-list)))
 
   ;; one fortune per session, so resizing doesn't reshuffle it
   (defvar +banner--fortune nil)
@@ -493,12 +605,21 @@ Keys on the home screen: =r= recent files, =p= projects, =f= find file,
                           author)))))))
 
   (defvar +banner-actions
-    '(("r" "recent"   consult-recent-file)
-      ("p" "projects" projectile-switch-project)
+    '(("r" "recent"   consult-recent-file recentf-open recentf-open-files)
+      ("p" "projects" projectile-switch-project project-switch-project)
       ("f" "find"     find-file)
       ("c" "config"   +open-config)
-      ("g" "magit"    magit-status)
-      ("q" "quit"     quit-window)))
+      ("g" "magit"    magit-status vc-dir)
+      ("q" "quit"     quit-window))
+    "Key, label, then the commands to try in order.")
+
+  (defun +banner--command (candidates)
+    "A command running the first of CANDIDATES that is defined when invoked."
+    (lambda ()
+      (interactive)
+      (if-let* ((cmd (seq-find #'fboundp candidates)))
+          (call-interactively cmd)
+        (user-error "None of %s is available" candidates))))
 
   (defun +open-config ()
     (interactive)
@@ -507,7 +628,7 @@ Keys on the home screen: =r= recent files, =p= projects, =f= find file,
   (defvar +home-mode-map
     (let ((map (make-sparse-keymap)))
       (dolist (a +banner-actions)
-        (define-key map (kbd (car a)) (nth 2 a)))
+        (define-key map (kbd (car a)) (+banner--command (nthcdr 2 a))))
       map))
 
   (define-derived-mode +home-mode special-mode "Home"
@@ -525,9 +646,11 @@ Keys on the home screen: =r= recent files, =p= projects, =f= find file,
     ;; width of one banner row = sum of each letter's width
     (let ((cols (apply #'+ (mapcar (lambda (letter) (length (cadr letter))) +separate-banner)))
           (rows 23))                    ; 13 art rows + stats, keys, quote
-      (max 0.5 (min +banner-max-scale
-                    (/ (- (window-width) 4) (float cols))
-                    (/ (window-height) (* rows 0.8))))))
+      (if (not (display-graphic-p))
+          1.0                           ; terminals can't scale text
+        (max 0.5 (min +banner-max-scale
+                      (/ (- (window-width) 4) (float cols))
+                      (/ (window-height) (* rows 0.8)))))))
 
   (defun +banner--wrap (text width)
     "Split TEXT into lines of at most WIDTH chars, on word boundaries."
@@ -671,8 +794,10 @@ Orderless (type words in any order), Marginalia (annotations), Consult
            ("M-g e"   . consult-compile-error)
            ("M-g f"   . consult-flymake)
            ("C-c f"   . consult-recent-file)
-           ("C-c g"   . consult-git-grep)
-           ("C-c G"   . consult-grep))
+           ("C-c g"   . consult-git-grep))
+    :init
+    ;; ripgrep when installed, plain grep otherwise
+    (global-set-key (kbd "C-c G") (if (+has "rg") #'consult-ripgrep #'consult-grep))
     :custom
     (consult-narrow-key "<")
     (xref-show-xrefs-function #'consult-xref)
@@ -783,13 +908,28 @@ Built-in c-mode / c++-mode with 4-space K&R style.
 #+end_src
 
 ** Eglot (LSP — built-in since Emacs 29)
-clangd for C and C++ (eglot already knows to use it for these modes).
+clangd (or ccls) for C and C++. Only started when one of them is installed,
+so opening a C file on a machine without a language server stays quiet.
 #+begin_src emacs-lisp
+  (defvar +c-language-servers '("clangd" "ccls"))
+
+  (defun +eglot-maybe-ensure ()
+    (when (and (fboundp 'eglot-ensure) (apply #'+has +c-language-servers))
+      (eglot-ensure)))
+
   (with-eval-after-load 'eglot
     (setq eglot-autoshutdown t
           eglot-events-buffer-config '(:size 0)))  ; faster, no log buffer
   (dolist (hook '(c-mode-hook c++-mode-hook c-ts-mode-hook c++-ts-mode-hook))
-    (add-hook hook #'eglot-ensure))
+    (add-hook hook #'+eglot-maybe-ensure))
+#+end_src
+
+** CMake (when cmake is installed)
+#+begin_src emacs-lisp
+  (when (+has "cmake")
+    (use-package cmake-mode
+      :ensure t
+      :defer t))
 #+end_src
 
 ** Compilation
@@ -799,18 +939,33 @@ ask before restarting a running compile.
   (setq compilation-scroll-output 'first-error
         compilation-always-kill t
         compilation-ask-about-save nil)
-  (add-hook 'compilation-filter-hook #'ansi-color-compilation-filter)
+  (when (fboundp 'ansi-color-compilation-filter)  ; Emacs 28+
+    (add-hook 'compilation-filter-hook #'ansi-color-compilation-filter))
 #+end_src
 
-** Magit
+** Magit (when git is installed)
 #+begin_src emacs-lisp
-  ;; magit needs a newer transient than the one built into Emacs 30
-  (use-package transient :ensure t)
-  (use-package magit
-    :ensure t
-    :bind ("C-x g" . magit-status)
-    :custom
-    (magit-display-buffer-function #'magit-display-buffer-same-window-except-diff-v1))
+  (when (+has "git")
+    ;; magit needs a newer transient than the one built into Emacs 30
+    (use-package transient :ensure t)
+    (use-package magit
+      :ensure t
+      :bind ("C-x g" . magit-status)
+      :custom
+      (magit-display-buffer-function #'magit-display-buffer-same-window-except-diff-v1)))
+#+end_src
+
+** VTerm (when its native module can be built)
+vterm compiles a C module the first time it loads, which needs module
+support plus cmake, make and a C compiler. Without them, use =M-x eshell=.
+#+begin_src emacs-lisp
+  (when (and (bound-and-true-p module-file-suffix)
+             (+has "cmake") (+has "make") (+has "cc" "gcc" "clang"))
+    (use-package vterm
+      :ensure t
+      :defer t
+      :custom
+      (vterm-always-compile-module t)))  ; don't stop to ask (hangs a daemon)
 #+end_src
 
 ** Open Man pages on current buffer
