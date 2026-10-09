@@ -586,7 +586,8 @@ commands that exists, so it still works if e.g. magit didn't install.
                  nil "^[^.]"))
       (length package-activated-list)))
 
-  ;; one fortune per session, so resizing doesn't reshuffle it
+  ;; one fortune per banner: resizing redraws with the same one, a new
+  ;; banner (a new emacsclient frame, the daemon lives on) picks another
   (defvar +banner--fortune nil)
   (defun +banner--fortune ()
     (or +banner--fortune
@@ -729,6 +730,7 @@ commands that exists, so it still works if e.g. magit didn't install.
     (let ((buf (get-buffer-create "*home*")))
       (with-current-buffer buf
         (+home-mode)
+        (setq +banner--fortune nil)       ; a fresh quote for each new banner
         (draw-ascii-banner-fn)
         (add-hook 'window-size-change-functions #'+banner--resize-handler)
         buf)))
