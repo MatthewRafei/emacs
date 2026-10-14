@@ -1,6 +1,12 @@
 ;;; init.el --- -*- lexical-binding: t -*-
-(org-babel-load-file
- (expand-file-name "config.org" user-emacs-directory))
+;; Load config.el directly; only pull in Org to re-tangle it when config.org
+;; is newer. (org-babel-load-file loads all of Org on every startup.)
+(let ((org (expand-file-name "config.org" user-emacs-directory))
+      (el  (expand-file-name "config.el" user-emacs-directory)))
+  (when (file-newer-than-file-p org el)
+    (require 'ob-tangle)
+    (org-babel-tangle-file org el "emacs-lisp"))
+  (load el nil 'nomessage 'nosuffix))
 (custom-set-variables
  ;; custom-set-variables was added by Custom.
  ;; If you edit it by hand, you could mess it up, so be careful.

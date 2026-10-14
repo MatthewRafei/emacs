@@ -1,6 +1,27 @@
 ;;; config.el --- tangled from config.org, edit that instead  -*- lexical-binding: t -*-
 (setq cursor-in-non-selected-windows nil)
 
+(require 'subr-x)
+
+(defun +has (&rest programs)
+  "Path of the first of PROGRAMS found on `exec-path', or nil."
+  (seq-some #'executable-find programs))
+
+(defvar +pkg-manager (if (+has "git") 'elpaca 'package)
+  "Elpaca clones every package with git; without git use package.el.")
+
+(defmacro +pkg-wait ()
+  "Block until queued packages are installed (no-op under package.el)."
+  '(when (eq +pkg-manager 'elpaca) (elpaca-wait)))
+
+(defun +gui-frame-hook (fn)
+  "Run FN on every graphical frame, now and whenever a client makes one.
+Under --daemon there is no GUI at startup, so font/frame setup has to wait."
+  (if (daemonp)
+      (add-hook 'server-after-make-frame-hook
+                (lambda () (when (display-graphic-p) (funcall fn (selected-frame)))))
+    (when (display-graphic-p) (funcall fn (selected-frame)))))
+
 (defvar elpaca-installer-version 0.12)
 (defvar elpaca-directory (expand-file-name "elpaca/" user-emacs-directory))
 (defvar elpaca-builds-directory (expand-file-name "builds/" elpaca-directory))
@@ -9,6 +30,7 @@
                               :ref nil :depth 1 :inherit ignore
                               :files (:defaults "elpaca-test.el")
                               :build (:not elpaca-activate)))
+(when (eq +pkg-manager 'elpaca)
 (let* ((repo  (expand-file-name "elpaca/" elpaca-sources-directory))
        (build (expand-file-name "elpaca/" elpaca-builds-directory))
        (order (cdr elpaca-order))
@@ -36,16 +58,35 @@
   (unless (require 'elpaca-autoloads nil t)
     (require 'elpaca)
     (elpaca-generate-autoloads "elpaca" repo)
-    (let ((load-source-file-function nil)) (load "./elpaca-autoloads"))))
-(add-hook 'after-init-hook #'elpaca-process-queues)
-(elpaca `(,@elpaca-order))
+    (let ((load-source-file-function nil)) (load "./elpaca-autoloads")))))
 
-(elpaca elpaca-use-package
-  (elpaca-use-package-mode))
+(when (eq +pkg-manager 'elpaca)
+  (add-hook 'after-init-hook #'elpaca-process-queues)
+  (elpaca `(,@elpaca-order))
+  (elpaca elpaca-use-package
+    (elpaca-use-package-mode))
+  ;; Most packages below depend on these. Queued separately on a fresh
+  ;; install, every dependent races to clone the same repo and sees a
+  ;; half-written checkout ("Unable to find main elisp file for compat"),
+  ;; so build them once, first.
+  (elpaca compat)
+  (elpaca cond-let)
+  (elpaca llama))
 
-(elpaca-wait)
+(+pkg-wait)
 
-(defvar +cache-dir (expand-file-name "~/.cache/emacs/"))
+(when (eq +pkg-manager 'package)
+  (require 'package)
+  (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
+  (setq package-install-upgrade-built-in t)  ; newer transient for magit
+  (package-initialize)
+  (unless (require 'use-package nil t)       ; built in since Emacs 29
+    (package-refresh-contents)
+    (package-install 'use-package)
+    (require 'use-package)))
+
+(defvar +cache-dir
+  (expand-file-name "emacs/" (or (getenv "XDG_CACHE_HOME") "~/.cache")))
 (make-directory (expand-file-name "backups/" +cache-dir) t)
 (make-directory (expand-file-name "auto-save/" +cache-dir) t)
 
@@ -71,8 +112,11 @@
               tab-width 4
               fill-column 80)
 
-(setq use-short-answers t
-      ring-bell-function #'ignore
+(if (boundp 'use-short-answers)          ; Emacs 28+
+    (setq use-short-answers t)
+  (fset 'yes-or-no-p #'y-or-n-p))
+
+(setq ring-bell-function #'ignore
       confirm-kill-processes nil
       require-final-newline t
       sentence-end-double-space nil
@@ -81,8 +125,10 @@
       recentf-max-saved-items 300
       scroll-conservatively 101
       scroll-margin 4
-      mouse-wheel-progressive-speed nil
       enable-recursive-minibuffers t)
+
+;; Chimera's ls is BSD and has no --dired; don't probe for it every session
+(setq dired-use-ls-dired nil)
 
 (set-language-environment "UTF-8")
 
@@ -93,8 +139,46 @@
 (delete-selection-mode 1)     ; typing replaces the region
 (electric-pair-mode 1)        ; auto-close brackets and quotes
 (column-number-mode 1)
-(pixel-scroll-precision-mode 1)
+(global-so-long-mode 1)       ; files with huge lines open in a cheap mode
 
+;; recentf checks every saved path on startup; do it when idle instead
+(setq recentf-auto-cleanup 300)
+;; file buffers revert via inotify; don't fall back to polling them
+(setq auto-revert-avoid-polling t)
+;; only git is used here; stops vc probing 5 other backends per file
+(setq vc-handled-backends '(Git))
+
+;; Redisplay: don't fontify text that's scrolled past, or while keys are
+;; still arriving (holding C-v / C-n); catch up when input stops
+(setq fast-but-imprecise-scrolling t
+      redisplay-skip-fontification-on-input t
+      auto-window-vscroll nil
+      scroll-preserve-screen-position t)
+
+;; Nothing to draw in windows you're not in, and no blink timer
+;; redrawing the cursor twice a second
+(setq highlight-nonselected-windows nil)
+(blink-cursor-mode -1)
+
+;; Touchpad: pixel-precise scrolling. Mouse wheel: jump straight there,
+;; 3 lines a click, instead of animating each click over 0.1s
+(when (fboundp 'pixel-scroll-precision-mode)  ; Emacs 29+
+  (setq pixel-scroll-precision-interpolate-mice nil)
+  (pixel-scroll-precision-mode 1))
+(setq mouse-wheel-scroll-amount '(3 ((shift) . hscroll)
+                                    ((control meta) . global-text-scale)
+                                    ((control) . text-scale))
+      mouse-wheel-progressive-speed nil)
+
+;; GC while idle, so the 64MB threshold set in early-init is rarely hit
+;; in the middle of scrolling or typing
+(defvar +gc-idle-timer (run-with-idle-timer 15 t #'garbage-collect))
+(add-function :after after-focus-change-function
+              (lambda () (unless (frame-focus-state) (garbage-collect))))
+
+(unless (locate-library "which-key")
+  (use-package which-key :ensure t :demand t)
+  (+pkg-wait))
 (setq which-key-side-window-location 'bottom
       which-key-sort-order #'which-key-key-order-alpha
       which-key-sort-uppercase-first nil
@@ -107,13 +191,12 @@
       which-key-max-description-length 25
       which-key-allow-imprecise-window-fit t
       which-key-separator " → ")
-(which-key-mode 1)
+(when (fboundp 'which-key-mode)
+  (which-key-mode 1))
 
 (use-package dracula-theme
   :ensure t
   :defer t)
-
-(require 'filenotify)
 
 (defvar +theme-palette-file (expand-file-name "~/.cache/theme/palette.json"))
 (defvar +theme-palette nil "Current palette as an alist, or nil.")
@@ -123,7 +206,10 @@
     (condition-case nil
         (with-temp-buffer
           (insert-file-contents +theme-palette-file)
-          (json-parse-buffer :object-type 'alist))
+          (if (and (fboundp 'json-available-p) (json-available-p))
+              (json-parse-buffer :object-type 'alist)
+            (require 'json)               ; Emacs built without libjansson
+            (let ((json-object-type 'alist)) (json-read))))
       (error nil))))
 
 (defun +c (key)
@@ -140,8 +226,10 @@
   (interactive)
   (setq +theme-palette (+theme--read-palette))
   (mapc #'disable-theme custom-enabled-themes)
-  (if (not +theme-palette)
-      (load-theme 'dracula t)
+  (if (not (and +theme-palette (memq 'modus-vivendi (custom-available-themes))))
+      (when-let* ((fallback (seq-find (lambda (th) (memq th (custom-available-themes)))
+                                      +theme-fallbacks)))
+        (load-theme fallback t))
     (setq modus-themes-bold-constructs t
           modus-themes-italic-constructs t
           modus-themes-mixed-fonts t
@@ -149,8 +237,11 @@
           modus-themes-headings '((1 . (1.4 bold))
                                   (2 . (1.2 bold))
                                   (t . (1.1 semibold))))
+    ;; a key missing from the palette drops out, leaving Modus's own colour
     (setq modus-vivendi-palette-overrides
-          `(;; surfaces
+          (seq-filter
+           #'cadr
+           `(;; surfaces
             (bg-main ,(+c 'bg))
             (bg-dim ,(+c 'bgCard))
             (bg-alt ,(+c 'surface))
@@ -202,41 +293,53 @@
             (bg-line-number-active ,(+c 'bg))
             (bg-line-number-inactive ,(+c 'bg))
             (fg-line-number-active ,(+c 'accent))
-            (fg-line-number-inactive ,(+c 'textFaint))))
+            (fg-line-number-inactive ,(+c 'textFaint)))))
     (load-theme 'modus-vivendi t))
+  ;; early-init paints frames black to avoid a white flash, but that frame
+  ;; parameter beats the theme, so every emacsclient frame stayed black.
+  ;; Hand new frames the palette background instead (or the theme's own).
+  (setq default-frame-alist (assq-delete-all 'background-color default-frame-alist))
+  (when-let* ((bg (and +theme-palette (+c 'bg))))
+    (push (cons 'background-color bg) default-frame-alist))
   (run-hooks '+theme-changed-hook))
+
+(defvar +theme-fallbacks '(dracula modus-vivendi wombat)
+  "Themes to try, in order, when there is no wallpaper palette.")
 
 (defvar +theme-changed-hook nil
   "Run after the wallpaper theme is (re)applied.")
 
-(defvar +theme--timer nil)
-(defun +theme--on-change (event)
-  (when (string= (file-name-nondirectory (or (nth 2 event) "")) "palette.json")
-    ;; the generator writes several files in a burst; settle first
-    (when +theme--timer (cancel-timer +theme--timer))
-    (setq +theme--timer (run-with-idle-timer 0.3 nil #'+theme-apply))))
+(defun +theme--tty-transparent (&optional frame)
+  "Terminal frames use the terminal's background (and its transparency)."
+  (dolist (f (if frame (list frame) (frame-list)))
+    (unless (display-graphic-p f)
+      (set-face-background 'default "unspecified-bg" f))))
+(add-hook '+theme-changed-hook #'+theme--tty-transparent)
+(add-hook 'after-make-frame-functions #'+theme--tty-transparent)
+(add-hook 'window-setup-hook #'+theme--tty-transparent)
 
-;; Watch the directory, not the file: the generator replaces the file
-;; atomically, which would orphan a watch on the old inode.
-(when (file-directory-p (file-name-directory +theme-palette-file))
-  (file-notify-add-watch (file-name-directory +theme-palette-file)
-                         '(change) #'+theme--on-change))
-
-(elpaca-wait)  ; make sure dracula is available for the fallback
+(+pkg-wait)  ; make sure dracula is available for the fallback
 (+theme-apply)
 
-(defvar +font
-  (cond ((find-font (font-spec :name "Iosevka Extended")) "Iosevka Extended")
-        ((find-font (font-spec :name "JetBrainsMono Nerd Font")) "JetBrainsMono Nerd Font")
-        (t "DejaVu Sans Mono")))
+(defvar +font-candidates
+  '("Iosevka Extended" "Iosevka" "JetBrainsMono Nerd Font" "JetBrains Mono"
+    "Fira Code" "Hack" "DejaVu Sans Mono")
+  "Preferred monospace fonts, best first.")
 
-(set-face-attribute 'default nil :family +font :height 110)
-(set-face-attribute 'fixed-pitch nil :family +font :height 1.0)
-(add-to-list 'default-frame-alist `(font . ,(format "%s-11" +font)))
+(defvar +font nil "Font family in use (nil until a graphical frame exists).")
 
-(add-to-list 'default-frame-alist '(alpha-background . 90))
+(defun +font-apply (frame)
+  (unless +font
+    (setq +font (seq-find (lambda (f) (find-font (font-spec :family f) frame))
+                          +font-candidates)))
+  (when +font
+    (set-face-attribute 'default nil :family +font :height 110)
+    (set-face-attribute 'fixed-pitch nil :family +font :height 1.0)
+    (add-to-list 'default-frame-alist `(font . ,(format "%s-11" +font)))))
+
+(+gui-frame-hook #'+font-apply)
+
 (add-to-list 'default-frame-alist '(internal-border-width . 14))
-(set-frame-parameter nil 'alpha-background 90)
 (set-frame-parameter nil 'internal-border-width 14)
 
 (setq-default left-fringe-width 8
@@ -252,18 +355,24 @@
 (defface +ml-warn '((t :inherit bold)) "Mode line warning.")
 
 (defun +ml--refresh-faces ()
-  (when +theme-palette
-    (set-face-attribute '+ml-accent nil :foreground (+c 'accent))
-    (set-face-attribute '+ml-dim nil :foreground (+c 'textDim))
-    (set-face-attribute '+ml-faint nil :foreground (+c 'textFaint))
-    (set-face-attribute '+ml-warn nil :foreground (+c 'danger))
+  ;; without a palette, borrow colours from whatever theme is loaded
+  (let ((pick (lambda (key face attr)
+                (or (and +theme-palette (+c key))
+                    (let ((v (face-attribute face attr nil t)))
+                      (if (stringp v) v 'unspecified))))))
+    (set-face-attribute '+ml-accent nil :foreground (funcall pick 'accent 'font-lock-keyword-face :foreground))
+    (set-face-attribute '+ml-dim nil :foreground (funcall pick 'textDim 'shadow :foreground))
+    (set-face-attribute '+ml-faint nil :foreground (funcall pick 'textFaint 'font-lock-comment-face :foreground))
+    (set-face-attribute '+ml-warn nil :foreground (funcall pick 'danger 'error :foreground))
     (dolist (f '(mode-line mode-line-inactive))
-      (set-face-attribute f nil :box `(:line-width 6 :color ,(+c 'bgPanel))))))
+      (set-face-attribute f nil :box `(:line-width 6 :color ,(funcall pick 'bgPanel f :background))))))
 (add-hook '+theme-changed-hook #'+ml--refresh-faces)
 (+ml--refresh-faces)
 
 (defun +ml--active-p ()
-  (mode-line-window-selected-p))
+  (if (fboundp 'mode-line-window-selected-p)   ; Emacs 29+
+      (mode-line-window-selected-p)
+    (eq (selected-window) (frame-selected-window))))
 
 (defun +ml--modified ()
   (cond (buffer-read-only (propertize " ● " 'face '+ml-faint 'help-echo "read-only"))
@@ -273,41 +382,43 @@
 
 (defun +ml--vc ()
   (when (and vc-mode (buffer-file-name))
-    (let ((branch (replace-regexp-in-string "^ Git[:-]" "" (substring-no-properties vc-mode))))
-      (concat (propertize "  //  " 'face '+ml-faint)
-              (propertize (concat " " branch) 'face '+ml-dim)))))
+    (concat (propertize "  //  " 'face '+ml-faint)
+            (propertize (concat " " (replace-regexp-in-string "\\` Git[:-]" "" (substring-no-properties vc-mode)))
+                        'face '+ml-dim))))
 
-(defun +ml--eglot ()
-  (when (and (fboundp 'eglot-managed-p) (eglot-managed-p))
-    (propertize "LSP  " 'face '+ml-dim)))
+;; "EMACS-LISP" etc., worked out once per buffer instead of every redraw
+(defvar-local +ml--mode nil)
+(defun +ml--mode ()
+  (or +ml--mode
+      (setq +ml--mode (propertize (upcase (string-remove-suffix "-mode" (symbol-name major-mode)))
+                                  'face '+ml-dim))))
+(add-hook 'after-change-major-mode-hook (lambda () (setq +ml--mode nil)))
 
-(defun +ml--flymake ()
-  (when (bound-and-true-p flymake-mode)
-    (let ((e (length (flymake-diagnostics nil nil))))
-      (when (> e 0)
-        (propertize (format "%d DIAG  " e) 'face '+ml-warn)))))
+;; Right side is monospace text, so its width in columns is enough to
+;; align it; `mode-line-format-right-align' measures pixels every redraw
+(defun +ml--right ()
+  (let ((s (concat (propertize (format-mode-line "%l:%c") 'face '+ml-dim)
+                   (propertize "  //  %p " 'face '+ml-faint))))
+    (concat (propertize " " 'display `(space :align-to (- right ,(+ (string-width (format-mode-line s)) 1))))
+            s)))
 
 (setq-default
  mode-line-format
  '((:eval (+ml--modified))
    (:eval (propertize (buffer-name) 'face (if (+ml--active-p) 'bold '+ml-dim)))
-   (:eval (propertize "  //  " 'face '+ml-faint))
-   (:eval (propertize (upcase (string-remove-suffix "-mode" (symbol-name major-mode)))
-                      'face '+ml-dim))
+   (:propertize "  //  " face +ml-faint)
+   (:eval (+ml--mode))
    (:eval (+ml--vc))
-   mode-line-format-right-align
-   (:eval (+ml--flymake))
-   (:eval (+ml--eglot))
-   (:eval (propertize "%l:%c" 'face '+ml-dim))
-   (:eval (propertize "  //  " 'face '+ml-faint))
-   (:eval (propertize "%p " 'face '+ml-faint))))
+   (:eval (+ml--right))))
 
 (defvar +banner--width 80)
 
 (defvar +banner--scale 2.0)
 
 (defun +banner--center (len s &optional scale)
-  (let ((padding (max 0 (/ (- len (* (length s) (or scale +banner--scale))) 2))))
+  ;; terminals ignore :height, so there everything is 1:1
+  (let* ((scale (if (display-graphic-p) (or scale +banner--scale) 1.0))
+         (padding (max 0 (/ (- len (* (length s) scale)) 2))))
     (concat (make-string (floor padding) ?\s) s)))
 
 (defcustom +banner--top-pos 3
@@ -415,35 +526,27 @@
           (number-sequence 0 12)))
 
 (defun get-elpaca-package-count ()
-  (length (directory-files
-           (expand-file-name "builds/" elpaca-directory)
-           nil "^[^.]")))
-
-;; one fortune per session, so resizing doesn't reshuffle it
-(defvar +banner--fortune nil)
-(defun +banner--fortune ()
-  (or +banner--fortune
-      (setq +banner--fortune
-            (let ((bin (or (executable-find "fortune")
-                           (let ((f (expand-file-name "~/.local/bin/fortune")))
-                             (and (file-executable-p f) f)))))
-              (when bin
-                (let* ((out (string-trim (shell-command-to-string
-                                          (concat (shell-quote-argument bin) " -s -n 110"))))
-                       (lines (split-string out "\n" t "[ \t]+"))
-                       (author (and (cdr lines)
-                                    (string-match "^--\\s-*\\(.+\\)" (car (last lines)))
-                                    (match-string 1 (car (last lines))))))
-                  (cons (string-join (if author (butlast lines) lines) " ")
-                        author)))))))
+  (if (eq +pkg-manager 'elpaca)
+      (length (directory-files
+               (expand-file-name "builds/" elpaca-directory)
+               nil "^[^.]"))
+    (length package-activated-list)))
 
 (defvar +banner-actions
-  '(("r" "recent"   consult-recent-file)
-    ("p" "projects" projectile-switch-project)
+  '(("r" "recent"   consult-recent-file recentf-open recentf-open-files)
+    ("p" "projects" projectile-switch-project project-switch-project)
     ("f" "find"     find-file)
     ("c" "config"   +open-config)
-    ("g" "magit"    magit-status)
-    ("q" "quit"     quit-window)))
+    ("g" "magit"    magit-status vc-dir))
+  "Key, label, then the commands to try in order.")
+
+(defun +banner--command (candidates)
+  "A command running the first of CANDIDATES that is defined when invoked."
+  (lambda ()
+    (interactive)
+    (if-let* ((cmd (seq-find #'fboundp candidates)))
+        (call-interactively cmd)
+      (user-error "None of %s is available" candidates))))
 
 (defun +open-config ()
   (interactive)
@@ -452,7 +555,7 @@
 (defvar +home-mode-map
   (let ((map (make-sparse-keymap)))
     (dolist (a +banner-actions)
-      (define-key map (kbd (car a)) (nth 2 a)))
+      (define-key map (kbd (car a)) (+banner--command (nthcdr 2 a))))
     map))
 
 (define-derived-mode +home-mode special-mode "Home"
@@ -469,20 +572,12 @@ bigger windows keep that size instead of blowing the logo up.")
   "Largest text scale (up to `+banner-max-scale') at which the banner fits."
   ;; width of one banner row = sum of each letter's width
   (let ((cols (apply #'+ (mapcar (lambda (letter) (length (cadr letter))) +separate-banner)))
-        (rows 23))                    ; 13 art rows + stats, keys, quote
-    (max 0.5 (min +banner-max-scale
-                  (/ (- (window-width) 4) (float cols))
-                  (/ (window-height) (* rows 0.8))))))
-
-(defun +banner--wrap (text width)
-  "Split TEXT into lines of at most WIDTH chars, on word boundaries."
-  (let (lines cur)
-    (dolist (w (split-string text " " t))
-      (if (and cur (> (+ (length cur) 1 (length w)) width))
-          (progn (push cur lines) (setq cur w))
-        (setq cur (if cur (concat cur " " w) w))))
-    (when cur (push cur lines))
-    (nreverse lines)))
+        (rows 19))                    ; 13 art rows + stats and keys
+    (if (not (display-graphic-p))
+        1.0                           ; terminals can't scale text
+      (max 0.5 (min +banner-max-scale
+                    (/ (- (window-width) 4) (float cols))
+                    (/ (window-height) (* rows 0.8)))))))
 
 (defun draw-ascii-banner-fn ()
   (let* ((+banner--scale (+banner--fit-scale))
@@ -491,7 +586,6 @@ bigger windows keep that size instead of blowing the logo up.")
          (current-width (window-width))
          (padding-top (max 0 (floor (/ (- (window-height) (* (+ (length banner) 6) +banner--scale)) +banner--top-pos))))
          (padding-string (make-string longest-line ?\s))
-         (fortune (+banner--fortune))
          (inhibit-read-only t))
     (erase-buffer)
     (dotimes (_ padding-top) (insert padding-string "\n"))
@@ -516,19 +610,6 @@ bigger windows keep that size instead of blowing the logo up.")
                         (propertize "   " 'face '(:height 1.3)))
              1.3)
             "\n\n")
-    ;; fortune
-    (when fortune
-      (dolist (q (+banner--wrap (concat "“" (car fortune) "”")
-                                (max 20 (floor (- current-width 8) 1.2))))
-        (insert (+banner--center current-width
-                                 (propertize q 'face (append (+banner--dim) '(:slant italic :height 1.2)))
-                                 1.2)
-                "\n"))
-      (when (cdr fortune)
-        (insert (+banner--center current-width
-                                 (propertize (concat "— " (cdr fortune)) 'face (append (+banner--faint) '(:height 1.1)))
-                                 1.1)
-                "\n")))
     (goto-char (point-min))))
 
 (defun +banner--resize-handler (_)
@@ -597,53 +678,36 @@ bigger windows keep that size instead of blowing the logo up.")
          ("M-g g"   . consult-goto-line)
          ("M-g i"   . consult-imenu)
          ("M-g e"   . consult-compile-error)
-         ("M-g f"   . consult-flymake)
          ("C-c f"   . consult-recent-file)
-         ("C-c g"   . consult-git-grep)
-         ("C-c G"   . consult-grep))
+         ("C-c g"   . consult-git-grep))
+  :init
+  ;; ripgrep when installed, plain grep otherwise
+  (global-set-key (kbd "C-c G") (if (+has "rg") #'consult-ripgrep #'consult-grep))
   :custom
   (consult-narrow-key "<")
   (xref-show-xrefs-function #'consult-xref)
   (xref-show-definitions-function #'consult-xref))
 
-(use-package corfu
-  :ensure t
-  :custom
-  (corfu-auto t)
-  (corfu-auto-delay 0.2)
-  (corfu-auto-prefix 2)
-  (corfu-cycle t)
-  (corfu-preselect 'prompt)
-  (corfu-popupinfo-delay '(0.6 . 0.3))
-  :init
-  (global-corfu-mode 1)
-  (corfu-popupinfo-mode 1))
-
-;; extra completion sources: words in open buffers, file paths
-(use-package cape
-  :ensure t
-  :init
-  (add-hook 'completion-at-point-functions #'cape-dabbrev)
-  (add-hook 'completion-at-point-functions #'cape-file))
-
-(setq tab-always-indent 'complete)
-
+;; loads on first C-c p (or the home screen's p), not at startup
 (use-package projectile
   :ensure t
+  :bind-keymap ("C-c p" . projectile-command-map)
+  :commands projectile-switch-project
   :config
-  (projectile-mode +1)
   (setq projectile-completion-system 'default)  ; i.e. Vertico
-  (define-key projectile-mode-map (kbd "C-c p") 'projectile-command-map))
+  (projectile-mode +1))
 
 (use-package multiple-cursors
-  :ensure t)
+  :ensure t
+  :defer t)
 
 (add-hook 'prog-mode-hook #'hl-line-mode)
 
 (setq show-paren-delay 0
       show-paren-context-when-offscreen 'overlay)
 
-(require 'org-tempo)
+(with-eval-after-load 'org
+  (require 'org-tempo))
 
 (setq org-hide-emphasis-markers t
       org-pretty-entities t
@@ -674,24 +738,33 @@ bigger windows keep that size instead of blowing the logo up.")
 (setq c-default-style '((java-mode . "java") (awk-mode . "awk") (other . "k&r"))
       c-basic-offset 4)
 
-(with-eval-after-load 'eglot
-  (setq eglot-autoshutdown t
-        eglot-events-buffer-config '(:size 0)))  ; faster, no log buffer
-(dolist (hook '(c-mode-hook c++-mode-hook c-ts-mode-hook c++-ts-mode-hook))
-  (add-hook hook #'eglot-ensure))
+(when (+has "cmake")
+  (use-package cmake-mode
+    :ensure t
+    :defer t))
 
 (setq compilation-scroll-output 'first-error
       compilation-always-kill t
       compilation-ask-about-save nil)
-(add-hook 'compilation-filter-hook #'ansi-color-compilation-filter)
+(when (fboundp 'ansi-color-compilation-filter)  ; Emacs 28+
+  (add-hook 'compilation-filter-hook #'ansi-color-compilation-filter))
 
-;; magit needs a newer transient than the one built into Emacs 30
-(use-package transient :ensure t)
-(use-package magit
-  :ensure t
-  :bind ("C-x g" . magit-status)
-  :custom
-  (magit-display-buffer-function #'magit-display-buffer-same-window-except-diff-v1))
+(when (+has "git")
+  ;; magit needs a newer transient than the one built into Emacs 30
+  (use-package transient :ensure t :defer t)
+  (use-package magit
+    :ensure t
+    :bind ("C-x g" . magit-status)
+    :custom
+    (magit-display-buffer-function #'magit-display-buffer-same-window-except-diff-v1)))
+
+(when (and (bound-and-true-p module-file-suffix)
+           (+has "cmake") (+has "make") (+has "cc" "gcc" "clang"))
+  (use-package vterm
+    :ensure t
+    :defer t
+    :custom
+    (vterm-always-compile-module t)))  ; don't stop to ask (hangs a daemon)
 
 (setq Man-notify-method 'pushy)
 

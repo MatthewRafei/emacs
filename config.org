@@ -154,7 +154,6 @@ instead of littering this folder (and the folders you edit in) with =~= and =#= 
         recentf-max-saved-items 300
         scroll-conservatively 101
         scroll-margin 4
-        mouse-wheel-progressive-speed nil
         enable-recursive-minibuffers t)
 
   ;; Chimera's ls is BSD and has no --dired; don't probe for it every session
@@ -169,8 +168,48 @@ instead of littering this folder (and the folders you edit in) with =~= and =#= 
   (delete-selection-mode 1)     ; typing replaces the region
   (electric-pair-mode 1)        ; auto-close brackets and quotes
   (column-number-mode 1)
+  (global-so-long-mode 1)       ; files with huge lines open in a cheap mode
+
+  ;; recentf checks every saved path on startup; do it when idle instead
+  (setq recentf-auto-cleanup 300)
+  ;; file buffers revert via inotify; don't fall back to polling them
+  (setq auto-revert-avoid-polling t)
+  ;; only git is used here; stops vc probing 5 other backends per file
+  (setq vc-handled-backends '(Git))
+#+end_src
+
+** Speed
+Measured on =config.org=: Emacs itself draws a frame in ~5 ms, so the
+stutter came from the GTK side (PGTK renders this 1.25x screen at 2x, see
+=early-init.el=) and from mouse-wheel scrolls being animated through that.
+#+begin_src emacs-lisp
+  ;; Redisplay: don't fontify text that's scrolled past, or while keys are
+  ;; still arriving (holding C-v / C-n); catch up when input stops
+  (setq fast-but-imprecise-scrolling t
+        redisplay-skip-fontification-on-input t
+        auto-window-vscroll nil
+        scroll-preserve-screen-position t)
+
+  ;; Nothing to draw in windows you're not in, and no blink timer
+  ;; redrawing the cursor twice a second
+  (setq highlight-nonselected-windows nil)
+  (blink-cursor-mode -1)
+
+  ;; Touchpad: pixel-precise scrolling. Mouse wheel: jump straight there,
+  ;; 3 lines a click, instead of animating each click over 0.1s
   (when (fboundp 'pixel-scroll-precision-mode)  ; Emacs 29+
+    (setq pixel-scroll-precision-interpolate-mice nil)
     (pixel-scroll-precision-mode 1))
+  (setq mouse-wheel-scroll-amount '(3 ((shift) . hscroll)
+                                      ((control meta) . global-text-scale)
+                                      ((control) . text-scale))
+        mouse-wheel-progressive-speed nil)
+
+  ;; GC while idle, so the 64MB threshold set in early-init is rarely hit
+  ;; in the middle of scrolling or typing
+  (defvar +gc-idle-timer (run-with-idle-timer 15 t #'garbage-collect))
+  (add-function :after after-focus-change-function
+                (lambda () (unless (frame-focus-state) (garbage-collect))))
 #+end_src
 
 ** Which-key (built-in since Emacs 30; installed on older Emacs)
@@ -200,8 +239,8 @@ instead of littering this folder (and the folders you edit in) with =~= and =#= 
 Emacs follows the system colour scheme. =~/.config/theme/wallpaper-theme=
 writes =~/.cache/theme/palette.json= whenever the wallpaper changes; we
 recolour the built-in =modus-vivendi= theme from it (Modus covers every
-face, so a dozen colours are enough to theme the whole UI). The palette
-directory is watched, so changing wallpaper recolours Emacs live.
+face, so a dozen colours are enough to theme the whole UI). The palette is
+read at startup; after changing wallpaper, =C-c t= recolours Emacs.
 
 Without a palette (e.g. on another machine) it falls back to Dracula, or
 to a built-in theme if Dracula couldn't be installed. In a terminal the
@@ -210,8 +249,6 @@ background is left to the terminal, so its own opacity shows through.
   (use-package dracula-theme
     :ensure t
     :defer t)
-
-  (require 'filenotify)
 
   (defvar +theme-palette-file (expand-file-name "~/.cache/theme/palette.json"))
   (defvar +theme-palette nil "Current palette as an alist, or nil.")
@@ -333,21 +370,6 @@ background is left to the terminal, so its own opacity shows through.
   (add-hook 'after-make-frame-functions #'+theme--tty-transparent)
   (add-hook 'window-setup-hook #'+theme--tty-transparent)
 
-  (defvar +theme--timer nil)
-  (defun +theme--on-change (event)
-    (when (string= (file-name-nondirectory (or (nth 2 event) "")) "palette.json")
-      ;; the generator writes several files in a burst; settle first
-      (when +theme--timer (cancel-timer +theme--timer))
-      (setq +theme--timer (run-with-idle-timer 0.3 nil #'+theme-apply))))
-
-  ;; Watch the directory, not the file: the generator replaces the file
-  ;; atomically, which would orphan a watch on the old inode.
-  (when (and (bound-and-true-p file-notify--library)   ; no inotify etc. -> C-c t
-             (file-directory-p (file-name-directory +theme-palette-file)))
-    (ignore-errors
-      (file-notify-add-watch (file-name-directory +theme-palette-file)
-                             '(change) #'+theme--on-change)))
-
   (+pkg-wait)  ; make sure dracula is available for the fallback
   (+theme-apply)
 #+end_src
@@ -376,12 +398,11 @@ from a graphical frame, so under =--daemon= this runs when the first
   (+gui-frame-hook #'+font-apply)
 #+end_src
 
-** Frame: transparency and breathing room
-Matches the terminal (90% background opacity; text stays solid).
+** Frame: breathing room
+Opaque on purpose: a translucent background makes every frame blend
+against the desktop, which costs redraw time on this display.
 #+begin_src emacs-lisp
-  (add-to-list 'default-frame-alist '(alpha-background . 90))
   (add-to-list 'default-frame-alist '(internal-border-width . 14))
-  (set-frame-parameter nil 'alpha-background 90)
   (set-frame-parameter nil 'internal-border-width 14)
 
   (setq-default left-fringe-width 8
@@ -429,43 +450,40 @@ modified dot, accent for what matters, everything else dimmed.
 
   (defun +ml--vc ()
     (when (and vc-mode (buffer-file-name))
-      (let ((branch (replace-regexp-in-string "^ Git[:-]" "" (substring-no-properties vc-mode))))
-        (concat (propertize "  //  " 'face '+ml-faint)
-                (propertize (concat " " branch) 'face '+ml-dim)))))
+      (concat (propertize "  //  " 'face '+ml-faint)
+              (propertize (concat " " (replace-regexp-in-string "\\` Git[:-]" "" (substring-no-properties vc-mode)))
+                          'face '+ml-dim))))
 
-  (defun +ml--eglot ()
-    (when (and (fboundp 'eglot-managed-p) (eglot-managed-p))
-      (propertize "LSP  " 'face '+ml-dim)))
+  ;; "EMACS-LISP" etc., worked out once per buffer instead of every redraw
+  (defvar-local +ml--mode nil)
+  (defun +ml--mode ()
+    (or +ml--mode
+        (setq +ml--mode (propertize (upcase (string-remove-suffix "-mode" (symbol-name major-mode)))
+                                    'face '+ml-dim))))
+  (add-hook 'after-change-major-mode-hook (lambda () (setq +ml--mode nil)))
 
-  (defun +ml--flymake ()
-    (when (bound-and-true-p flymake-mode)
-      (let ((e (length (flymake-diagnostics nil nil))))
-        (when (> e 0)
-          (propertize (format "%d DIAG  " e) 'face '+ml-warn)))))
+  ;; Right side is monospace text, so its width in columns is enough to
+  ;; align it; `mode-line-format-right-align' measures pixels every redraw
+  (defun +ml--right ()
+    (let ((s (concat (propertize (format-mode-line "%l:%c") 'face '+ml-dim)
+                     (propertize "  //  %p " 'face '+ml-faint))))
+      (concat (propertize " " 'display `(space :align-to (- right ,(+ (string-width (format-mode-line s)) 1))))
+              s)))
 
   (setq-default
    mode-line-format
-   `((:eval (+ml--modified))
+   '((:eval (+ml--modified))
      (:eval (propertize (buffer-name) 'face (if (+ml--active-p) 'bold '+ml-dim)))
-     (:eval (propertize "  //  " 'face '+ml-faint))
-     (:eval (propertize (upcase (string-remove-suffix "-mode" (symbol-name major-mode)))
-                        'face '+ml-dim))
+     (:propertize "  //  " face +ml-faint)
+     (:eval (+ml--mode))
      (:eval (+ml--vc))
-     ,(if (boundp 'mode-line-format-right-align)  ; Emacs 30+
-          'mode-line-format-right-align
-        "    ")
-     (:eval (+ml--flymake))
-     (:eval (+ml--eglot))
-     (:eval (propertize "%l:%c" 'face '+ml-dim))
-     (:eval (propertize "  //  " 'face '+ml-faint))
-     (:eval (propertize "%p " 'face '+ml-faint))))
+     (:eval (+ml--right))))
 #+end_src
 
 ** Startup Banner
-The colours of each letter come from the wallpaper palette, and a fortune
-sits under it (=~/.local/bin/fortune=, same quotes as the bar).
+The colours of each letter come from the wallpaper palette.
 Keys on the home screen: =r= recent files, =p= projects, =f= find file,
-=c= this config, =g= magit, =q= quit window. Each key runs the first of its
+=c= this config, =g= magit. Each key runs the first of its
 commands that exists, so it still works if e.g. magit didn't install.
 #+begin_src emacs-lisp
   (defvar +banner--width 80)
@@ -589,32 +607,12 @@ commands that exists, so it still works if e.g. magit didn't install.
                  nil "^[^.]"))
       (length package-activated-list)))
 
-  ;; one fortune per banner: resizing redraws with the same one, a new
-  ;; banner (a new emacsclient frame, the daemon lives on) picks another
-  (defvar +banner--fortune nil)
-  (defun +banner--fortune ()
-    (or +banner--fortune
-        (setq +banner--fortune
-              (let ((bin (or (executable-find "fortune")
-                             (let ((f (expand-file-name "~/.local/bin/fortune")))
-                               (and (file-executable-p f) f)))))
-                (when bin
-                  (let* ((out (string-trim (shell-command-to-string
-                                            (concat (shell-quote-argument bin) " -s -n 110"))))
-                         (lines (split-string out "\n" t "[ \t]+"))
-                         (author (and (cdr lines)
-                                      (string-match "^--\\s-*\\(.+\\)" (car (last lines)))
-                                      (match-string 1 (car (last lines))))))
-                    (cons (string-join (if author (butlast lines) lines) " ")
-                          author)))))))
-
   (defvar +banner-actions
     '(("r" "recent"   consult-recent-file recentf-open recentf-open-files)
       ("p" "projects" projectile-switch-project project-switch-project)
       ("f" "find"     find-file)
       ("c" "config"   +open-config)
-      ("g" "magit"    magit-status vc-dir)
-      ("q" "quit"     quit-window))
+      ("g" "magit"    magit-status vc-dir))
     "Key, label, then the commands to try in order.")
 
   (defun +banner--command (candidates)
@@ -649,22 +647,12 @@ commands that exists, so it still works if e.g. magit didn't install.
     "Largest text scale (up to `+banner-max-scale') at which the banner fits."
     ;; width of one banner row = sum of each letter's width
     (let ((cols (apply #'+ (mapcar (lambda (letter) (length (cadr letter))) +separate-banner)))
-          (rows 23))                    ; 13 art rows + stats, keys, quote
+          (rows 19))                    ; 13 art rows + stats and keys
       (if (not (display-graphic-p))
           1.0                           ; terminals can't scale text
         (max 0.5 (min +banner-max-scale
                       (/ (- (window-width) 4) (float cols))
                       (/ (window-height) (* rows 0.8)))))))
-
-  (defun +banner--wrap (text width)
-    "Split TEXT into lines of at most WIDTH chars, on word boundaries."
-    (let (lines cur)
-      (dolist (w (split-string text " " t))
-        (if (and cur (> (+ (length cur) 1 (length w)) width))
-            (progn (push cur lines) (setq cur w))
-          (setq cur (if cur (concat cur " " w) w))))
-      (when cur (push cur lines))
-      (nreverse lines)))
 
   (defun draw-ascii-banner-fn ()
     (let* ((+banner--scale (+banner--fit-scale))
@@ -673,7 +661,6 @@ commands that exists, so it still works if e.g. magit didn't install.
            (current-width (window-width))
            (padding-top (max 0 (floor (/ (- (window-height) (* (+ (length banner) 6) +banner--scale)) +banner--top-pos))))
            (padding-string (make-string longest-line ?\s))
-           (fortune (+banner--fortune))
            (inhibit-read-only t))
       (erase-buffer)
       (dotimes (_ padding-top) (insert padding-string "\n"))
@@ -698,19 +685,6 @@ commands that exists, so it still works if e.g. magit didn't install.
                           (propertize "   " 'face '(:height 1.3)))
                1.3)
               "\n\n")
-      ;; fortune
-      (when fortune
-        (dolist (q (+banner--wrap (concat "“" (car fortune) "”")
-                                  (max 20 (floor (- current-width 8) 1.2))))
-          (insert (+banner--center current-width
-                                   (propertize q 'face (append (+banner--dim) '(:slant italic :height 1.2)))
-                                   1.2)
-                  "\n"))
-        (when (cdr fortune)
-          (insert (+banner--center current-width
-                                   (propertize (concat "— " (cdr fortune)) 'face (append (+banner--faint) '(:height 1.1)))
-                                   1.1)
-                  "\n")))
       (goto-char (point-min))))
 
   (defun +banner--resize-handler (_)
@@ -733,7 +707,6 @@ commands that exists, so it still works if e.g. magit didn't install.
     (let ((buf (get-buffer-create "*home*")))
       (with-current-buffer buf
         (+home-mode)
-        (setq +banner--fortune nil)       ; a fresh quote for each new banner
         (draw-ascii-banner-fn)
         (add-hook 'window-size-change-functions #'+banner--resize-handler)
         buf)))
@@ -744,7 +717,7 @@ commands that exists, so it still works if e.g. magit didn't install.
 * COMPLETION
 Ido is replaced by the modern minibuffer stack: Vertico (vertical list),
 Orderless (type words in any order), Marginalia (annotations), Consult
-(search/navigation commands). Corfu does in-buffer popups.
+(search/navigation commands).
 
 ** Vertico
 #+begin_src emacs-lisp
@@ -797,7 +770,6 @@ Orderless (type words in any order), Marginalia (annotations), Consult
            ("M-g g"   . consult-goto-line)
            ("M-g i"   . consult-imenu)
            ("M-g e"   . consult-compile-error)
-           ("M-g f"   . consult-flymake)
            ("C-c f"   . consult-recent-file)
            ("C-c g"   . consult-git-grep))
     :init
@@ -809,39 +781,16 @@ Orderless (type words in any order), Marginalia (annotations), Consult
     (xref-show-definitions-function #'consult-xref))
 #+end_src
 
-** Corfu (in-buffer completion)
-#+begin_src emacs-lisp
-  (use-package corfu
-    :ensure t
-    :custom
-    (corfu-auto t)
-    (corfu-auto-delay 0.2)
-    (corfu-auto-prefix 2)
-    (corfu-cycle t)
-    (corfu-preselect 'prompt)
-    (corfu-popupinfo-delay '(0.6 . 0.3))
-    :init
-    (global-corfu-mode 1)
-    (corfu-popupinfo-mode 1))
-
-  ;; extra completion sources: words in open buffers, file paths
-  (use-package cape
-    :ensure t
-    :init
-    (add-hook 'completion-at-point-functions #'cape-dabbrev)
-    (add-hook 'completion-at-point-functions #'cape-file))
-
-  (setq tab-always-indent 'complete)
-#+end_src
-
 ** Projectile
 #+begin_src emacs-lisp
+  ;; loads on first C-c p (or the home screen's p), not at startup
   (use-package projectile
     :ensure t
+    :bind-keymap ("C-c p" . projectile-command-map)
+    :commands projectile-switch-project
     :config
-    (projectile-mode +1)
     (setq projectile-completion-system 'default)  ; i.e. Vertico
-    (define-key projectile-mode-map (kbd "C-c p") 'projectile-command-map))
+    (projectile-mode +1))
 #+end_src
 
 * EDITING
@@ -849,7 +798,8 @@ Orderless (type words in any order), Marginalia (annotations), Consult
 ** Multiple Cursors
 #+begin_src emacs-lisp
   (use-package multiple-cursors
-    :ensure t)
+    :ensure t
+    :defer t)
 #+end_src
 
 ** Highlight the current line in code
@@ -867,7 +817,8 @@ Orderless (type words in any order), Marginalia (annotations), Consult
 
 ** Org
 #+begin_src emacs-lisp
-  (require 'org-tempo)
+  (with-eval-after-load 'org
+    (require 'org-tempo))
 
   (setq org-hide-emphasis-markers t
         org-pretty-entities t
@@ -912,23 +863,6 @@ Built-in c-mode / c++-mode with 4-space K&R style.
         c-basic-offset 4)
 #+end_src
 
-** Eglot (LSP — built-in since Emacs 29)
-clangd (or ccls) for C and C++. Only started when one of them is installed,
-so opening a C file on a machine without a language server stays quiet.
-#+begin_src emacs-lisp
-  (defvar +c-language-servers '("clangd" "ccls"))
-
-  (defun +eglot-maybe-ensure ()
-    (when (and (fboundp 'eglot-ensure) (apply #'+has +c-language-servers))
-      (eglot-ensure)))
-
-  (with-eval-after-load 'eglot
-    (setq eglot-autoshutdown t
-          eglot-events-buffer-config '(:size 0)))  ; faster, no log buffer
-  (dolist (hook '(c-mode-hook c++-mode-hook c-ts-mode-hook c++-ts-mode-hook))
-    (add-hook hook #'+eglot-maybe-ensure))
-#+end_src
-
 ** CMake (when cmake is installed)
 #+begin_src emacs-lisp
   (when (+has "cmake")
@@ -952,7 +886,7 @@ ask before restarting a running compile.
 #+begin_src emacs-lisp
   (when (+has "git")
     ;; magit needs a newer transient than the one built into Emacs 30
-    (use-package transient :ensure t)
+    (use-package transient :ensure t :defer t)
     (use-package magit
       :ensure t
       :bind ("C-x g" . magit-status)
