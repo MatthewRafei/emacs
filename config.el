@@ -132,6 +132,12 @@ Under --daemon there is no GUI at startup, so font/frame setup has to wait."
 
 (set-language-environment "UTF-8")
 
+;; recentf checks every saved path on startup; do it when idle instead
+;; (set before recentf-mode, which reads it when it turns on)
+(setq recentf-auto-cleanup 300)
+;; file buffers revert via inotify; don't fall back to polling them
+(setq auto-revert-avoid-polling t)
+
 (recentf-mode 1)              ; recent files
 (savehist-mode 1)             ; minibuffer history survives restarts
 (save-place-mode 1)           ; reopen files where you left off
@@ -141,10 +147,6 @@ Under --daemon there is no GUI at startup, so font/frame setup has to wait."
 (column-number-mode 1)
 (global-so-long-mode 1)       ; files with huge lines open in a cheap mode
 
-;; recentf checks every saved path on startup; do it when idle instead
-(setq recentf-auto-cleanup 300)
-;; file buffers revert via inotify; don't fall back to polling them
-(setq auto-revert-avoid-polling t)
 ;; only git is used here; stops vc probing 5 other backends per file
 (setq vc-handled-backends '(Git))
 

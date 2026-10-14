@@ -5,7 +5,10 @@
       (el  (expand-file-name "config.el" user-emacs-directory)))
   (when (file-newer-than-file-p org el)
     (require 'ob-tangle)
-    (org-babel-tangle-file org el "emacs-lisp"))
+    (org-babel-tangle-file org el "emacs-lisp")
+    ;; Org leaves config.el alone when the code didn't change (prose-only
+    ;; edits), which would leave config.org newer and re-tangle every start
+    (set-file-times el))
   (load el nil 'nomessage 'nosuffix))
 (custom-set-variables
  ;; custom-set-variables was added by Custom.
