@@ -157,6 +157,9 @@ instead of littering this folder (and the folders you edit in) with =~= and =#= 
         mouse-wheel-progressive-speed nil
         enable-recursive-minibuffers t)
 
+  ;; Chimera's ls is BSD and has no --dired; don't probe for it every session
+  (setq dired-use-ls-dired nil)
+
   (set-language-environment "UTF-8")
 
   (recentf-mode 1)              ; recent files
